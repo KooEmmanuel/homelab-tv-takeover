@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# firetv: control a Fire TV from a Raspberry Pi (or any Linux/macOS box) over ADB.
+# firetv: control a Fire TV over ADB from a laptop or a homelab (Linux or macOS).
 # The TV address lives in ~/.config/firetv.env (FIRETV_ADDR=ip:5555).
 #
 #   firetv status                 connected? awake? what's in front
@@ -18,9 +18,12 @@ set -uo pipefail
 
 [[ -f $HOME/.config/firetv.env ]] && source "$HOME/.config/firetv.env"
 ADDR=${FIRETV_ADDR:-192.168.1.50:5555}
-ADB=${ADB:-$HOME/.local/bin/adb}
+ADB=${ADB:-$(command -v adb || echo "$HOME/.local/bin/adb")}
+# macOS has no `timeout`; use GNU timeout/gtimeout when present, otherwise run without one
+TIMEOUT=$(command -v timeout || command -v gtimeout || true)
 
 die() { echo "firetv: $*" >&2; exit 1; }
+[[ -x $ADB ]] || die "adb not found. Install it first: macOS: brew install android-platform-tools  ·  Debian/Ubuntu/Raspberry Pi: sudo apt install adb  ·  Windows: use WSL"
 # device, unauthorized, offline, or empty when not connected
 state() { "$ADB" devices | awk -v a="$ADDR" '$1 == a { print $2 }'; }
 
@@ -30,7 +33,7 @@ connect() {
   # it waiting for the one already on screen.
   [[ $(state) == unauthorized ]] && die "the TV has not allowed this Pi yet: tick Always allow, then press Allow"
   "$ADB" disconnect "$ADDR" >/dev/null 2>&1
-  timeout 10 "$ADB" connect "$ADDR" >/dev/null 2>&1
+  ${TIMEOUT:+$TIMEOUT 10} "$ADB" connect "$ADDR" >/dev/null 2>&1
   for _ in 1 2 3; do [[ $(state) == device ]] && return 0; sleep 1; done
   case $(state) in
     unauthorized) die "the TV has not allowed this Pi yet: tick Always allow, then press Allow" ;;

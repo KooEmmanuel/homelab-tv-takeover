@@ -1,12 +1,12 @@
 # The prompts
 
-Paste these into Claude Code one at a time, in order. Replace the parts in `<angle brackets>` with your own details. Read what Claude plans to do before you say yes, especially anything that changes the TV.
+Paste these into Claude Code one at a time, in order. Prompts 1–5 are all you need with just a laptop (Path 1). Prompt 6 is for letting an AI control the TV (Path 2), and 7 is for a homelab (Path 3). Replace the parts in `<angle brackets>` with your own details. Read what Claude plans to do before you say yes, especially anything that changes the TV.
 
 ---
 
 ## 1. Find your TV
 
-From a homelab (what I did):
+From a homelab (what I did, Path 3):
 
 ```
 I have a Raspberry Pi homelab on my home network (ssh <user>@<pi-hostname>, network <your network, e.g. 192.168.1.0/24>).
@@ -23,7 +23,7 @@ Run it on the Pi over ssh, then give me a table of the TVs you found: name, bran
 one can be controlled. Then tell me which one is the best to take over and why.
 ```
 
-From a laptop (no homelab needed):
+From a laptop (no homelab needed, Path 1):
 
 ```
 Find the smart TVs on my home network from this computer. Use only read-only discovery (SSDP, mDNS and
@@ -54,7 +54,7 @@ and list what it changes and how to undo it. Don't run anything yet.
 ## 3. Connect and check (read-only)
 
 ```
-Connect to my TV over ADB at <TV IP>:5555. I'll accept the prompt on the TV (and tick "Always allow").
+Install adb on this computer if it isn't there. Connect to my TV over ADB at <TV IP>:5555. I'll accept the prompt on the TV (and tick "Always allow").
 Then run a read-only check and tell me the model, the software build, and whether it matches what the
 project was tested on. Don't change anything on the TV yet.
 ```

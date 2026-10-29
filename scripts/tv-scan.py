@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Find smart TVs on the home network. Standard library only, read-only.
 
-Run on the Pi:  python3 tv-scan.py            (scans your own /24, e.g. 192.168.1.1-254)
+Run on the Pi:  python3 tv-scan.py            (scans your own network, worked out automatically)
                 python3 tv-scan.py 192.168.1   (another /24)
                 python3 tv-scan.py --json      (machine-readable output)
 
@@ -23,7 +23,17 @@ import time
 import urllib.request
 import xml.etree.ElementTree as ET
 
-SUBNET = next((a for a in sys.argv[1:] if not a.startswith("-")), "192.168.1")
+def _own_subnet():
+    """First three numbers of this computer's own address, e.g. 192.168.1 (falls back to 192.168.1)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("239.255.255.250", 1900))
+        return s.getsockname()[0].rsplit(".", 1)[0]
+    except OSError:
+        return "192.168.1"
+
+
+SUBNET = next((a for a in sys.argv[1:] if not a.startswith("-")), None) or _own_subnet()
 AS_JSON = "--json" in sys.argv
 TIMEOUT = 2.0
 

@@ -120,13 +120,14 @@ class Jellyfin:
                 hits = [g for g in genres if g.lower() in q or any(w.rstrip("s") == g.lower().rstrip("s")
                                                                      for w in wanted)]
                 if hits:
-                    items = self.call("/Items", {**base, "genres": "|".join(hits), "includeItemTypes": kinds,
+                    items = self.call("/Items", {**base, "limit": 50, "genres": "|".join(hits), "includeItemTypes": kinds,
                                                  "sortBy": "Random"})["Items"]
             if not items:
                 die(f"nothing in Jellyfin matches '{query}' (genres: "
                     + ", ".join(g["Name"] for g in self.call("/Genres", {"userId": user})["Items"]) + ")")
         else:
-            items = self.call("/Items", {**base, "includeItemTypes": kinds, "sortBy": "DateCreated",
+            # A list of the library is the whole library: a small count made "you have one movie" answers.
+            items = self.call("/Items", {**base, "limit": 50, "includeItemTypes": kinds, "sortBy": "DateCreated",
                                          "sortOrder": "Descending"})["Items"]
             if not items:
                 die({"Series": "there are no shows in Jellyfin, only movies",

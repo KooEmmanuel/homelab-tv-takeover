@@ -84,8 +84,8 @@ TOOLS = [
         "description": "Look up videos without changing anything on the TV. 'youtube' returns the top YouTube results "
                        "(id, title, channel, length); 'jellyfin' searches your own Jellyfin library on your "
                        "homelab by title, then by genre (id, title, kind, year, genres). For Jellyfin, a general query "
-                       "like 'movies', 'shows' or 'anything' lists what is in the library, newest first, and a genre "
-                       "like 'comedy' or 'horror' lists those. Use it to pick the right one, then pass its id to tv_play.",
+                       "like 'movies', 'shows' or 'anything' lists everything in the library, newest first, and a genre "
+                       "or mood like 'comedy' or 'something scary' lists all of those; count only limits title searches. Use it to pick the right one, then pass its id to tv_play.",
         "inputSchema": {
             "type": "object",
             "properties": {

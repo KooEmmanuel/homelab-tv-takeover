@@ -27,7 +27,9 @@ Most people should start with Path 1, and only go further if they want to.
 ### Will it work on my TV?
 
 - **Fire TV, Google TV and Android TV:** yes. They all run Android underneath and have ADB (Android Debug Bridge), which is what everything here uses.
-- **Roku, Samsung (Tizen) and LG (webOS):** you can control these from your network in other ways, but you can't replace their home screens.
+- **LG (webOS):** not with these scripts, but it can be done. [webos-vibehack](https://github.com/OmkarK97/webos-vibehack) installs a custom home screen through LG's official Developer Mode app (free LG developer account, no root). webOS always sends the Home button to LG's own screen, so a small watcher running on another device switches back to the custom one.
+- **Samsung (Tizen):** you can install your own apps in Developer Mode, but I haven't found a reliable way to make the Home button open a custom home screen.
+- **Roku:** you can control it over the network (Roku's ECP), but the home screen can't be replaced.
 
 I used a 39" Insignia Fire TV on Fire OS 6.7. The new home screen comes from **[humblemuzzu/dumbtv](https://github.com/humblemuzzu/dumbtv)**, an open-source project that replaces the Fire TV home screen over ADB, without root. All the credit for the launcher itself goes to them.
 

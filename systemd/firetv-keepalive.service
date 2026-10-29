@@ -1,0 +1,6 @@
+[Unit]
+Description=Keep ADB connected to the Fire TV
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/firetv connect

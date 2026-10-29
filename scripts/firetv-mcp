@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""MCP server (stdio, standard library only) that lets an AI assistant control a Fire TV.
+
+Every tool runs the `firetv` command next to this file, which talks to the TV over ADB.
+Your assistant starts it directly, or over ssh from another machine:
+    ssh pi@homelab '~/.local/bin/firetv-mcp'
+"""
+import json
+import os
+import subprocess
+import sys
+
+FIRETV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firetv")
+
+BUTTONS = ["home", "back", "up", "down", "left", "right", "ok", "menu",
+           "play", "pause", "playpause", "next", "prev"]
+APPS = ["netflix", "youtube", "prime", "twitch", "music", "shopping", "jellyfin", "smarttube", "home"]
+
+TOOLS = [
+    {
+        "name": "tv_status",
+        "description": "Check the Fire TV: whether it is reachable, whether the screen is awake, "
+                       "which app is on screen, and the volume.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"title": "Fire TV status", "readOnlyHint": True},
+    },
+    {
+        "name": "tv_open_app",
+        "description": "Open an app on the Fire TV. 'jellyfin' is your own movies and shows from "
+                       "the homelab; 'smarttube' is YouTube without ads. 'home' goes back to the home screen.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"app": {"type": "string", "enum": APPS}},
+            "required": ["app"],
+        },
+        "annotations": {"title": "Open an app", "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "tv_press",
+        "description": "Press a button on the Fire TV remote: home, back, arrows, ok, menu, "
+                       "or playback (play, pause, playpause, next, prev).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "button": {"type": "string", "enum": BUTTONS},
+                "times": {"type": "integer", "minimum": 1, "maximum": 10, "default": 1},
+            },
+            "required": ["button"],
+        },
+        "annotations": {"title": "Press a remote button", "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "tv_volume",
+        "description": "Turn the Fire TV volume up or down by a number of steps, or toggle mute.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["up", "down", "mute"]},
+                "steps": {"type": "integer", "minimum": 1, "maximum": 10, "default": 1},
+            },
+            "required": ["action"],
+        },
+        "annotations": {"title": "Change the volume", "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "tv_search",
+        "description": "Search for a movie, show or video on the Fire TV and show the results on screen. "
+                       "Netflix for movies and shows, YouTube for videos. The person then picks a result with the "
+                       "remote (or ask to press arrows and ok); Netflix may show its profile picker first.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "enum": ["netflix", "youtube"]},
+                "query": {"type": "string", "maxLength": 100},
+            },
+            "required": ["app", "query"],
+        },
+        "annotations": {"title": "Search Netflix or YouTube", "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "tv_type",
+        "description": "Type text into the search box that is open on the Fire TV.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"text": {"type": "string", "maxLength": 100}},
+            "required": ["text"],
+        },
+        "annotations": {"title": "Type text", "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "tv_input",
+        "description": "Switch the Fire TV to an HDMI input or composite (av). "
+                       "The TV usually stops answering until someone presses Home on the remote.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"input": {"type": "string", "enum": ["1", "2", "3", "av"]}},
+            "required": ["input"],
+        },
+        "annotations": {"title": "Switch input", "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "tv_screen",
+        "description": "Turn the Fire TV screen off (sleep) or back on (wake). "
+                       "Wake only works if the TV went to sleep recently and still answers.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["sleep", "wake"]}},
+            "required": ["action"],
+        },
+        "annotations": {"title": "Screen on or off", "readOnlyHint": False, "destructiveHint": False},
+    },
+]
+
+
+def firetv(*args):
+    try:
+        p = subprocess.run([FIRETV, *args], capture_output=True, text=True, timeout=45)
+    except subprocess.TimeoutExpired:
+        return False, "The TV took too long to answer."
+    out = (p.stdout + p.stderr).strip().replace("firetv: ", "")
+    return p.returncode == 0, out
+
+
+def check(value, allowed):
+    if value not in allowed:
+        raise ValueError(f"'{value}' is not one of: {', '.join(allowed)}")
+    return value
+
+
+def count(args, key):
+    n = int(args.get(key, 1))
+    if not 1 <= n <= 10:
+        raise ValueError(f"{key} must be between 1 and 10")
+    return str(n)
+
+
+def run_tool(name, args):
+    if name == "tv_status":
+        return firetv("status")
+    if name == "tv_open_app":
+        return firetv("open", check(args.get("app"), APPS))
+    if name == "tv_press":
+        button = check(args.get("button"), BUTTONS)
+        times = count(args, "times")
+        ok, out = firetv(button, times) if button in ("back", "up", "down", "left", "right") else firetv(button)
+        return ok, out or f"Pressed {button}" + (f" {times} times" if times != "1" else "") + "."
+    if name == "tv_volume":
+        action = check(args.get("action"), ["up", "down", "mute"])
+        if action == "mute":
+            ok, out = firetv("mute")
+        else:
+            ok, out = firetv("vol" + action, count(args, "steps"))
+        if ok:
+            _, status = firetv("status")
+            out = next((l.split(None, 1)[1] for l in status.splitlines() if l.startswith("volume")), "done")
+            out = f"Volume is now {out}."
+        return ok, out
+    if name == "tv_search":
+        query = str(args.get("query", "")).strip()[:100]
+        if not query:
+            raise ValueError("query is empty")
+        app = check(args.get("app"), ["netflix", "youtube"])
+        ok, out = firetv("search", app, query)
+        return ok, f"Showing {app} results for \"{query}\" on the TV." if ok else out
+    if name == "tv_type":
+        text = str(args.get("text", ""))[:100]
+        if not text:
+            raise ValueError("text is empty")
+        ok, out = firetv("text", text)
+        return ok, out or f"Typed \"{text}\"."
+    if name == "tv_input":
+        return firetv("hdmi", check(args.get("input"), ["1", "2", "3", "av"]))
+    if name == "tv_screen":
+        action = check(args.get("action"), ["sleep", "wake"])
+        ok, out = firetv(action)
+        return ok, out or f"Screen {'off' if action == 'sleep' else 'on'}."
+    raise ValueError(f"unknown tool {name}")
+
+
+def reply(msg_id, result=None, error=None):
+    msg = {"jsonrpc": "2.0", "id": msg_id}
+    if error:
+        msg["error"] = error
+    else:
+        msg["result"] = result
+    sys.stdout.write(json.dumps(msg) + "\n")
+    sys.stdout.flush()
+
+
+def main():
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            reply(None, error={"code": -32700, "message": "parse error"})
+            continue
+        method, msg_id = msg.get("method"), msg.get("id")
+        if msg_id is None:  # notification
+            continue
+        params = msg.get("params") or {}
+        if method == "initialize":
+            reply(msg_id, {
+                "protocolVersion": params.get("protocolVersion", "2025-06-18"),
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "firetv", "version": "1.0"},
+            })
+        elif method == "ping":
+            reply(msg_id, {})
+        elif method == "tools/list":
+            reply(msg_id, {"tools": TOOLS})
+        elif method == "tools/call":
+            try:
+                ok, out = run_tool(params.get("name"), params.get("arguments") or {})
+            except (ValueError, TypeError) as e:
+                ok, out = False, str(e)
+            reply(msg_id, {"content": [{"type": "text", "text": out or "Done."}], "isError": not ok})
+        else:
+            reply(msg_id, error={"code": -32601, "message": f"unknown method {method}"})
+
+
+if __name__ == "__main__":
+    main()

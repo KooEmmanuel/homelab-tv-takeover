@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# firetv: control a Fire TV from a Raspberry Pi (or any Linux/macOS box) over ADB.
+# The TV address lives in ~/.config/firetv.env (FIRETV_ADDR=ip:5555).
+#
+#   firetv status                 connected? awake? what's in front
+#   firetv shot [file.png]        screenshot (default ~/firetv-shots/<time>.png)
+#   firetv apps                   launchable apps and their short names
+#   firetv open <app>             netflix, youtube, prime, twitch, music, jellyfin, smarttube, home, or a package name
+#   firetv home|back|up|down|left|right|ok|menu|play|pause|playpause|next|prev
+#   firetv volup|voldown|mute [n] press n times (default 1)
+#   firetv sleep | wake           screen off / on (wake only works while ADB still answers)
+#   firetv text "words"           type into the focused search box
+#   firetv search <netflix|youtube> "words"   open that app's search results
+#   firetv hdmi <1|2|3|av>        open that tile in dumbtv home's Inputs row
+#   firetv connect                (re)connect ADB; the keepalive timer does this every minute
+#   firetv raw <adb shell args>   anything else
+set -uo pipefail
+
+[[ -f $HOME/.config/firetv.env ]] && source "$HOME/.config/firetv.env"
+ADDR=${FIRETV_ADDR:-192.168.1.50:5555}
+ADB=${ADB:-$HOME/.local/bin/adb}
+
+die() { echo "firetv: $*" >&2; exit 1; }
+# device, unauthorized, offline, or empty when not connected
+state() { "$ADB" devices | awk -v a="$ADDR" '$1 == a { print $2 }'; }
+
+connect() {
+  [[ $(state) == device ]] && return 0
+  # Reconnecting an unauthorized link pops a new Allow dialog on the TV each time, so leave
+  # it waiting for the one already on screen.
+  [[ $(state) == unauthorized ]] && die "the TV has not allowed this Pi yet: tick Always allow, then press Allow"
+  "$ADB" disconnect "$ADDR" >/dev/null 2>&1
+  timeout 10 "$ADB" connect "$ADDR" >/dev/null 2>&1
+  for _ in 1 2 3; do [[ $(state) == device ]] && return 0; sleep 1; done
+  case $(state) in
+    unauthorized) die "the TV has not allowed this Pi yet: tick Always allow, then press Allow" ;;
+    # The port answers but adbd drops the handshake; only restarting ADB on the TV clears it.
+    offline) die "the TV's ADB is stuck: turn ADB debugging off and on in Developer options, or unplug the TV for 10 seconds" ;;
+    *) die "TV at $ADDR is not answering (asleep, or showing an HDMI input?)" ;;
+  esac
+}
+
+sh_() { "$ADB" -s "$ADDR" shell "$@" </dev/null | tr -d '\r'; }
+key() {
+  local code=$1 n=${2:-1}
+  [[ $n =~ ^[0-9]+$ ]] || die "count must be a number"
+  for ((i = 0; i < n; i++)); do sh_ input keyevent "$code"; done
+}
+
+# short name -> package
+pkg_for() {
+  case $1 in
+    netflix) echo com.netflix.ninja ;;
+    youtube) echo com.amazon.firetv.youtube ;;
+    prime|primevideo) echo com.amazon.firebat ;;
+    twitch) echo tv.twitch.android.viewer ;;
+    music|amazonmusic) echo com.amazon.bueller.music ;;
+    shopping|liveshopping) echo com.amazon.shoptv.firetv.client ;;
+    jellyfin) echo org.jellyfin.androidtv ;;
+    smarttube) echo org.smarttube.stable ;;
+    home|dumbtv) echo tv.dumbtv.home ;;
+    *.*) echo "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+front() { sh_ dumpsys window windows | sed -n 's/.*mCurrentFocus=Window{[^ ]* [^ ]* \([^ }]*\)}.*/\1/p' | head -1; }
+
+cmd=${1:-status}
+shift || true
+
+[[ $cmd == connect ]] && { connect && echo "connected to $ADDR"; exit; }
+connect
+
+case $cmd in
+  status)
+    echo "tv      $ADDR ($(sh_ getprop ro.product.model), build $(sh_ getprop ro.build.display.id))"
+    echo "screen  $(sh_ dumpsys power | sed -n 's/.*mWakefulness=//p' | head -1)"
+    echo "front   $(front)"
+    echo "volume  $(sh_ dumpsys audio | awk '
+      /^- STREAM_MUSIC:/ { s = 1; next }
+      s && /^- / { exit }
+      s && /Muted:/ { m = $2 }
+      s && /Devices:/ { d = $2 }
+      s && /Current:/ { c = $0 }
+      END { if (match(c, "\\(" d "\\): [0-9]+")) { v = substr(c, RSTART, RLENGTH); sub(/.*: /, "", v) }
+            printf "%s/100 on %s%s", v, d, (m == "true" ? " (muted)" : "") }')"
+    ;;
+  shot)
+    out=${1:-$HOME/firetv-shots/$(date +%Y%m%d-%H%M%S).png}
+    mkdir -p "$(dirname "$out")"
+    "$ADB" -s "$ADDR" exec-out screencap -p > "$out" && echo "$out"
+    ;;
+  apps)
+    sh_ cmd package query-activities -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER \
+      | sed -n 's/^ *packageName=//p' | sort -u
+    echo "short names: netflix youtube prime twitch music shopping jellyfin smarttube home"
+    ;;
+  open)
+    [[ -n ${1:-} ]] || die "usage: firetv open <app>"
+    pkg=$(pkg_for "$1") || die "unknown app '$1' (see: firetv apps)"
+    sh_ monkey -p "$pkg" -c android.intent.category.LEANBACK_LAUNCHER 1 | grep -q 'Events injected: 1' \
+      || sh_ monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 | grep -q 'Events injected: 1' \
+      || die "could not open $pkg"
+    echo "opened $pkg"
+    ;;
+  home) key KEYCODE_HOME ;;
+  back) key KEYCODE_BACK "${1:-1}" ;;
+  up) key KEYCODE_DPAD_UP "${1:-1}" ;;
+  down) key KEYCODE_DPAD_DOWN "${1:-1}" ;;
+  left) key KEYCODE_DPAD_LEFT "${1:-1}" ;;
+  right) key KEYCODE_DPAD_RIGHT "${1:-1}" ;;
+  ok|select|enter) key KEYCODE_DPAD_CENTER ;;
+  menu) key KEYCODE_MENU ;;
+  play) key KEYCODE_MEDIA_PLAY ;;
+  pause) key KEYCODE_MEDIA_PAUSE ;;
+  playpause) key KEYCODE_MEDIA_PLAY_PAUSE ;;
+  next) key KEYCODE_MEDIA_NEXT ;;
+  prev) key KEYCODE_MEDIA_PREVIOUS ;;
+  volup) key KEYCODE_VOLUME_UP "${1:-1}" ;;
+  voldown) key KEYCODE_VOLUME_DOWN "${1:-1}" ;;
+  mute) key KEYCODE_VOLUME_MUTE ;;
+  sleep) key KEYCODE_SLEEP ;;
+  wake) key KEYCODE_WAKEUP ;;
+  text)
+    [[ -n ${1:-} ]] || die "usage: firetv text \"words\""
+    # adb's input text needs spaces as %s and shell metacharacters escaped
+    sh_ input text "$(printf '%s' "$*" | sed 's/[]["'\''()<>|;&*\\~`$!?#]/\\&/g; s/ /%s/g')"
+    ;;
+  search)
+    [[ -n ${1:-} && -n ${2:-} ]] || die "usage: firetv search <netflix|youtube> \"words\""
+    app=$1; shift
+    q=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(" ".join(sys.argv[1:])))' "$@")
+    case $app in
+      netflix) url="nflx://www.netflix.com/search?q=$q"; pkg=com.netflix.ninja ;;
+      # A running YouTube only comes to the front and drops the link, so restart it (-S) with the
+      # link as its launch intent. -S needs the activity named: a bare package no longer resolves
+      # once it is stopped. YouTube may ask "Who's watching?" first; the search follows the pick.
+      youtube) url="https://www.youtube.com/results?search_query=$q"
+               pkg="-S -n com.amazon.firetv.youtube/dev.cobalt.app.MainActivity" ;;
+      *) die "search works in netflix or youtube" ;;
+    esac
+    out=$(sh_ "am start -a android.intent.action.VIEW -d '$url' $pkg 2>&1")
+    grep -q '^Error' <<<"$out" && die "could not open $app search: ${out#Error: }"
+    echo "searching $app for: $*"
+    ;;
+  hdmi)
+    # This Fire OS has no shell command that switches inputs, so walk dumbtv home's Inputs row.
+    case ${1:-} in 1) n=0 ;; 2) n=1 ;; 3) n=2 ;; av|composite) n=3 ;; *) die "usage: firetv hdmi <1|2|3|av>" ;; esac
+    key KEYCODE_HOME; sleep 1.5
+    key KEYCODE_DPAD_DOWN; key KEYCODE_DPAD_LEFT 6; key KEYCODE_DPAD_RIGHT "$n"
+    key KEYCODE_DPAD_CENTER
+    echo "switched to input $1 (ADB often drops while an input is showing; Home on the remote returns)"
+    ;;
+  raw) sh_ "$@" ;;
+  *) die "unknown command '$cmd' (see the top of $0)" ;;
+esac

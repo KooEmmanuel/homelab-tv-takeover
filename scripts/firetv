@@ -11,6 +11,12 @@
 #   firetv sleep | wake           screen off / on (wake only works while ADB still answers)
 #   firetv text "words"           type into the focused search box
 #   firetv search <netflix|youtube> "words"   open that app's search results
+#   firetv find <youtube|jellyfin> "words"    list the top results (id, title, ...) without touching the TV
+#   firetv play youtube "words"|<video id>    play the top YouTube result (or that video) in SmartTube, no ads
+#   firetv play jellyfin "words"|<item id>    play that movie or show from your Jellyfin server
+#   firetv settings [page]        network, device (About, Developer options), apps, controllers, display,
+#                                 preferences, accessibility, equipment, livetv, notifications, alexa,
+#                                 sleeptimer, help; no page = Amazon's grid
 #   firetv hdmi <1|2|3|av>        open that tile in dumbtv home's Inputs row
 #   firetv connect                (re)connect ADB; the keepalive timer does this every minute
 #   firetv raw <adb shell args>   anything else
@@ -21,6 +27,7 @@ ADDR=${FIRETV_ADDR:-192.168.1.50:5555}
 ADB=${ADB:-$(command -v adb || echo "$HOME/.local/bin/adb")}
 # macOS has no `timeout`; use GNU timeout/gtimeout when present, otherwise run without one
 TIMEOUT=$(command -v timeout || command -v gtimeout || true)
+MEDIA=$(dirname "$(readlink -f "$0")")/firetv-media
 
 die() { echo "firetv: $*" >&2; exit 1; }
 [[ -x $ADB ]] || die "adb not found. Install it first: macOS: brew install android-platform-tools  ·  Debian/Ubuntu/Raspberry Pi: sudo apt install adb  ·  Windows: use WSL"
@@ -73,6 +80,11 @@ cmd=${1:-status}
 shift || true
 
 [[ $cmd == connect ]] && { connect && echo "connected to $ADDR"; exit; }
+# Finding things only asks YouTube or Jellyfin, so it works while the TV is off.
+if [[ $cmd == find ]]; then
+  [[ ${1:-} =~ ^(youtube|jellyfin)$ && -n ${2:-} ]] || die "usage: firetv find <youtube|jellyfin> \"words\""
+  exec "$MEDIA" "$1" "$2" "${3:-5}"
+fi
 connect
 
 case $cmd in
@@ -115,7 +127,7 @@ case $cmd in
   right) key KEYCODE_DPAD_RIGHT "${1:-1}" ;;
   ok|select|enter) key KEYCODE_DPAD_CENTER ;;
   menu) key KEYCODE_MENU ;;
-  play) key KEYCODE_MEDIA_PLAY ;;
+  play) (( $# )) && exec "$0" play-media "$@"; key KEYCODE_MEDIA_PLAY ;;
   pause) key KEYCODE_MEDIA_PAUSE ;;
   playpause) key KEYCODE_MEDIA_PLAY_PAUSE ;;
   next) key KEYCODE_MEDIA_NEXT ;;
@@ -146,6 +158,73 @@ case $cmd in
     out=$(sh_ "am start -a android.intent.action.VIEW -d '$url' $pkg 2>&1")
     grep -q '^Error' <<<"$out" && die "could not open $app search: ${out#Error: }"
     echo "searching $app for: $*"
+    ;;
+  play-media)
+    [[ -n ${1:-} && -n ${2:-} ]] || die "usage: firetv play <youtube|jellyfin> \"words\"|<id>"
+    app=$1; shift
+    case $app in
+      youtube)
+        if [[ $# -eq 1 && $1 =~ ^[A-Za-z0-9_-]{11}$ ]]; then id=$1 title=$1
+        else
+          IFS=$'\t' read -r id title _ < <("$MEDIA" youtube "$*" 1) || exit 1
+        fi
+        st=org.smarttube.stable
+        # A cold SmartTube drops a video link and spins forever; once it is running, its splash
+        # screen takes the link and starts playing.
+        if [[ $(front) != $st/* ]]; then
+          sh_ monkey -p $st -c android.intent.category.LEANBACK_LAUNCHER 1 >/dev/null
+          for _ in 1 2 3 4 5 6 7 8 9 10; do sleep 1; [[ $(front) == $st/*BrowseActivity ]] && break; done
+          sleep 2
+        fi
+        out=$(sh_ "am start -a android.intent.action.VIEW -d 'https://www.youtube.com/watch?v=$id' -n $st/com.liskovsoft.smartyoutubetv2.tv.ui.main.SplashActivity 2>&1")
+        grep -q '^Error' <<<"$out" && die "could not start the video: ${out#Error: }"
+        echo "playing $title"
+        ;;
+      jellyfin)
+        if [[ $# -eq 1 && $1 =~ ^[0-9a-f]{32}$ ]]; then id=$1
+        else
+          IFS=$'\t' read -r id _ < <("$MEDIA" jellyfin "$*" 1) || exit 1
+        fi
+        "$MEDIA" jellyfin-play "$id"
+        ;;
+      *) die "play works with youtube or jellyfin" ;;
+    esac
+    ;;
+  settings)
+    # Amazon's grid opened on its own (without Amazon's home behind it) starts scrolled, with the
+    # top row off screen and nothing focused, so the remote can't move in it. Four pages can be
+    # started directly; the rest need Amazon's launcher permission, so open the grid and tap the tile.
+    s=com.amazon.tv.settings.v2/.tv
+    grid() { sh_ am start --activity-clear-task -a android.intent.action.MAIN -c android.intent.category.LEANBACK_SETTINGS >/dev/null; }
+    tile() {
+      grid; sleep 2.5
+      xy=$(sh_ "uiautomator dump /sdcard/firetv-ui.xml >/dev/null 2>&1; cat /sdcard/firetv-ui.xml" | python3 -c '
+import re, sys, html
+want = sys.argv[1].lower()
+for t, a, b, c, d in re.findall(r"text=\"([^\"]*)\"[^>]*bounds=\"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\"", sys.stdin.read()):
+    if html.unescape(t).replace("\n", " ").lower().startswith(want):
+        print((int(a) + int(c)) // 2, (int(b) + int(d)) // 2); break' "$1")
+      [[ -n $xy ]] || die "could not find the '$1' tile in Settings"
+      sh_ input tap $xy
+    }
+    case ${1:-} in
+      "") grid ;;
+      network|wifi) sh_ am start -n $s.network.NetworkActivity >/dev/null ;;
+      device|about|developer|software) sh_ am start -n $s.device.DeviceActivity >/dev/null ;;
+      apps|applications) sh_ am start -n $s.applications.ApplicationsActivity >/dev/null ;;
+      controllers|bluetooth|remote) sh_ am start -n $s.controllers_bluetooth_devices.ControllersAndBluetoothActivity >/dev/null ;;
+      display|sound|sounds|picture) tile "Display" ;;
+      preferences) tile "Preferences" ;;
+      accessibility) tile "Accessibility" ;;
+      equipment) tile "Equipment" ;;
+      livetv) tile "Live TV" ;;
+      notifications) tile "Notifications" ;;
+      alexa) tile "Alexa" ;;
+      sleeptimer) tile "Sleep Timer" ;;
+      help) tile "Help" ;;
+      *) die "unknown settings page '$1' (network, device, apps, controllers, display, preferences, accessibility, equipment, livetv, notifications, alexa, sleeptimer, help)" ;;
+    esac
+    echo "opened settings${1:+: $1}"
     ;;
   hdmi)
     # This Fire OS has no shell command that switches inputs, so walk dumbtv home's Inputs row.

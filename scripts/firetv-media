@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Find videos and movies for a Fire TV. Called by `firetv`; standard library only.
+
+    firetv-media youtube "words" [n]     top n YouTube results, one per line: id<TAB>title<TAB>channel<TAB>length
+    firetv-media jellyfin "words" [n]    matching movies, shows and episodes in Jellyfin: id<TAB>title<TAB>kind<TAB>year
+    firetv-media jellyfin-play <id>      start that item on the Jellyfin app on the TV (opens the app if needed)
+
+YouTube search uses yt-dlp (on PATH or in ~/.local/bin). Jellyfin needs JELLYFIN_KEY (Dashboard > API Keys)
+and JELLYFIN_URL in ~/.config/firetv.env.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+HOME = os.path.expanduser("~")
+
+
+def env():
+    vals = {}
+    try:
+        with open(os.path.join(HOME, ".config/firetv.env")) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    vals[k] = v.strip().strip("'\"")
+    except FileNotFoundError:
+        pass
+    vals.update({k: v for k, v in os.environ.items() if k.startswith(("JELLYFIN_", "FIRETV_"))})
+    return vals
+
+
+def die(msg):
+    print(f"firetv: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def length(seconds):
+    if not seconds:
+        return ""
+    s = int(float(seconds))
+    return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
+def youtube(query, n):
+    ytdlp = shutil.which("yt-dlp") or os.path.join(HOME, ".local/bin/yt-dlp")
+    try:
+        p = subprocess.run(
+            [ytdlp, "--flat-playlist", "--no-warnings", "--print", "%(id)s\t%(title)s\t%(channel)s\t%(duration)s",
+             f"ytsearch{n}:{query}"],
+            capture_output=True, text=True, timeout=40)
+    except FileNotFoundError:
+        die("yt-dlp is not installed: https://github.com/yt-dlp/yt-dlp#installation")
+    except subprocess.TimeoutExpired:
+        die("YouTube search took too long")
+    rows = [l.split("\t") for l in p.stdout.splitlines() if l.count("\t") == 3]
+    if not rows:
+        die(f"no YouTube results for '{query}'")
+    for vid, title, channel, dur in rows:
+        print(f"{vid}\t{title}\t{channel if channel != 'NA' else ''}\t{length(dur) if dur != 'NA' else ''}")
+
+
+class Jellyfin:
+    def __init__(self):
+        e = env()
+        self.url = e.get("JELLYFIN_URL", "http://localhost:8096").rstrip("/")
+        self.key = e.get("JELLYFIN_KEY", "")
+        if not self.key:
+            die("no Jellyfin key yet: create one in Jellyfin (Dashboard > API Keys) and add JELLYFIN_KEY=... "
+                "to ~/.config/firetv.env on the Pi")
+
+    def call(self, path, params=None, method="GET"):
+        url = self.url + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        req = urllib.request.Request(url, method=method, data=b"" if method == "POST" else None,
+                                     headers={"Authorization": f'MediaBrowser Token="{self.key}"'})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                body = r.read()
+        except urllib.error.HTTPError as e:
+            die("Jellyfin refused the key (check JELLYFIN_KEY)" if e.code == 401 else f"Jellyfin said {e.code} for {path}")
+        except (urllib.error.URLError, TimeoutError):
+            die(f"Jellyfin at {self.url} is not answering")
+        return json.loads(body) if body else None
+
+    def user(self):
+        users = self.call("/Users")
+        admins = [u for u in users if u.get("Policy", {}).get("IsAdministrator")]
+        return (admins or users)[0]["Id"]
+
+    # Asking for "movies" or "something to watch" means the whole library, not a title search.
+    GENERAL = {"", "*", "all", "any", "anything", "something", "everything", "movie", "movies", "film", "films",
+               "show", "shows", "tv", "series", "video", "videos", "library", "watch", "something to watch"}
+    MOODS = {"funny": "comedy", "comedies": "comedy", "laugh": "comedy", "scary": "horror", "spooky": "horror",
+             "scifi": "science fiction", "sci": "science fiction", "space": "science fiction", "kids": "family",
+             "cartoon": "animation", "cartoons": "animation", "animated": "animation", "romantic": "romance",
+             "love": "romance", "magic": "fantasy", "fight": "action", "war": "war", "crime": "crime"}
+
+    def search(self, query, n):
+        user = self.user()
+        base = {"userId": user, "recursive": "true", "limit": n, "fields": "ProductionYear,Genres",
+                "enableImages": "false"}
+        q = query.strip().lower()
+        kinds = "Series" if q in ("show", "shows", "tv", "series") else \
+                "Movie" if q in ("movie", "movies", "film", "films") else "Movie,Series"
+        items = []
+        if q not in self.GENERAL:
+            items = self.call("/Items", {**base, "searchTerm": query,
+                                         "includeItemTypes": "Movie,Series,Episode,Video,MusicVideo"})["Items"]
+            if not items:
+                # "something funny" finds nothing by title, so try the words as genres.
+                genres = [g["Name"] for g in self.call("/Genres", {"userId": user})["Items"]]
+                words = q.replace("-", " ").split()
+                wanted = {self.MOODS[w] for w in words if w in self.MOODS} | set(words)
+                hits = [g for g in genres if g.lower() in q or any(w.rstrip("s") == g.lower().rstrip("s")
+                                                                     for w in wanted)]
+                if hits:
+                    items = self.call("/Items", {**base, "genres": "|".join(hits), "includeItemTypes": kinds,
+                                                 "sortBy": "Random"})["Items"]
+            if not items:
+                die(f"nothing in Jellyfin matches '{query}' (genres: "
+                    + ", ".join(g["Name"] for g in self.call("/Genres", {"userId": user})["Items"]) + ")")
+        else:
+            items = self.call("/Items", {**base, "includeItemTypes": kinds, "sortBy": "DateCreated",
+                                         "sortOrder": "Descending"})["Items"]
+            if not items:
+                die({"Series": "there are no shows in Jellyfin, only movies",
+                     "Movie": "there are no movies in Jellyfin"}.get(kinds, "the Jellyfin library is empty"))
+        for it in items:
+            name = it["Name"]
+            if it["Type"] == "Episode":
+                name = f'{it.get("SeriesName", "")} S{it.get("ParentIndexNumber", 0):02d}E{it.get("IndexNumber", 0):02d} {name}'
+            print(f'{it["Id"]}\t{name}\t{it["Type"].lower()}\t{it.get("ProductionYear", "")}\t'
+                  + ", ".join(it.get("Genres", [])[:3]))
+
+    def tv_session(self):
+        for s in self.call("/Sessions", {"activeWithinSeconds": 900}) or []:
+            if s.get("SupportsRemoteControl") and "android tv" in s.get("Client", "").lower():
+                return s["Id"]
+        return None
+
+    def play(self, item_id):
+        user = self.user()
+        item = self.call(f"/Users/{user}/Items/{item_id}")
+        play_id, label = item["Id"], item["Name"]
+        if item["Type"] == "Series":
+            # A show starts where it was left off: the next episode up, or the first one.
+            nxt = self.call("/Shows/NextUp", {"userId": user, "seriesId": item_id, "limit": 1})["Items"]
+            if not nxt:
+                nxt = self.call(f"/Shows/{item_id}/Episodes", {"userId": user, "limit": 1})["Items"]
+            if not nxt:
+                die(f"{label} has no episodes")
+            ep = nxt[0]
+            play_id = ep["Id"]
+            label = f'{label} S{ep.get("ParentIndexNumber", 0):02d}E{ep.get("IndexNumber", 0):02d} {ep["Name"]}'
+        session = self.tv_session()
+        if not session:
+            # The TV app only registers a session while it is open.
+            subprocess.run([os.path.join(os.path.dirname(os.path.abspath(__file__)), "firetv"), "open", "jellyfin"],
+                           capture_output=True, timeout=30)
+            for _ in range(15):
+                time.sleep(1)
+                session = self.tv_session()
+                if session:
+                    break
+        if not session:
+            die("the Jellyfin app on the TV did not show up (is it signed in?)")
+        self.call(f"/Sessions/{session}/Playing", {"playCommand": "PlayNow", "itemIds": play_id}, method="POST")
+        print(f"playing {label}")
+
+
+def main():
+    args = sys.argv[1:]
+    if len(args) < 2:
+        die(__doc__.strip().split("\n\n")[1])
+    cmd, arg = args[0], args[1]
+    n = int(args[2]) if len(args) > 2 and args[2].isdigit() else 5
+    n = max(1, min(n, 10))
+    if cmd == "youtube":
+        youtube(arg, n)
+    elif cmd == "jellyfin":
+        Jellyfin().search(arg, n)
+    elif cmd == "jellyfin-play":
+        Jellyfin().play(arg)
+    else:
+        die(f"unknown command '{cmd}'")
+
+
+if __name__ == "__main__":
+    main()

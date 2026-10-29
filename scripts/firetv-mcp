@@ -15,6 +15,8 @@ FIRETV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "firetv")
 BUTTONS = ["home", "back", "up", "down", "left", "right", "ok", "menu",
            "play", "pause", "playpause", "next", "prev"]
 APPS = ["netflix", "youtube", "prime", "twitch", "music", "shopping", "jellyfin", "smarttube", "home"]
+SETTINGS = ["network", "device", "apps", "controllers", "display", "preferences", "accessibility", "equipment",
+            "livetv", "notifications", "alexa", "sleeptimer", "help"]
 
 TOOLS = [
     {
@@ -76,6 +78,53 @@ TOOLS = [
             "required": ["app", "query"],
         },
         "annotations": {"title": "Search Netflix or YouTube", "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "tv_find",
+        "description": "Look up videos without changing anything on the TV. 'youtube' returns the top YouTube results "
+                       "(id, title, channel, length); 'jellyfin' searches your own Jellyfin library on your "
+                       "homelab by title, then by genre (id, title, kind, year, genres). For Jellyfin, a general query "
+                       "like 'movies', 'shows' or 'anything' lists what is in the library, newest first, and a genre "
+                       "like 'comedy' or 'horror' lists those. Use it to pick the right one, then pass its id to tv_play.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "enum": ["youtube", "jellyfin"]},
+                "query": {"type": "string", "maxLength": 100},
+                "count": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+            },
+            "required": ["source", "query"],
+        },
+        "annotations": {"title": "Find videos", "readOnlyHint": True},
+    },
+    {
+        "name": "tv_play",
+        "description": "Start playing a video on the Fire TV, straight away. 'youtube' plays in SmartTube "
+                       "(YouTube without ads); 'jellyfin' plays a movie or show from your Jellyfin server (a show "
+                       "continues with its next episode). Give a query to play the best match, or an id from tv_find "
+                       "to play exactly that one. For Netflix use tv_search instead: Netflix can only show results.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "enum": ["youtube", "jellyfin"]},
+                "query": {"type": "string", "maxLength": 100, "description": "what to play, or an id from tv_find"},
+            },
+            "required": ["source", "query"],
+        },
+        "annotations": {"title": "Play a video", "readOnlyHint": False, "destructiveHint": False},
+    },
+    {
+        "name": "tv_settings",
+        "description": "Open a Fire TV settings page on the TV: network (Wi-Fi), device (About, Developer options, "
+                       "restart), apps, controllers (remotes and Bluetooth), display (picture and sound), preferences, "
+                       "accessibility, equipment (soundbar, CEC), livetv, notifications, alexa, sleeptimer, help. "
+                       "Leave page out for Amazon's settings grid, which the remote can't move around in on this "
+                       "TV, so prefer a page.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"page": {"type": "string", "enum": SETTINGS}},
+        },
+        "annotations": {"title": "Open settings", "readOnlyHint": False, "destructiveHint": False},
     },
     {
         "name": "tv_type",
@@ -162,6 +211,23 @@ def run_tool(name, args):
         app = check(args.get("app"), ["netflix", "youtube"])
         ok, out = firetv("search", app, query)
         return ok, f"Showing {app} results for \"{query}\" on the TV." if ok else out
+    if name in ("tv_find", "tv_play"):
+        query = str(args.get("query", "")).strip()[:100]
+        if not query:
+            raise ValueError("query is empty")
+        source = check(args.get("source"), ["youtube", "jellyfin"])
+        if name == "tv_play":
+            ok, out = firetv("play", source, query)
+            return ok, (out[0].upper() + out[1:] + " on the TV.") if ok and out else out
+        ok, out = firetv("find", source, query, count(args, "count"))
+        if not ok:
+            return ok, out
+        cols = ["id", "title", "channel", "length"] if source == "youtube" else ["id", "title", "kind", "year", "genres"]
+        rows = [dict(zip(cols, l.split("\t"))) for l in out.splitlines() if "\t" in l]
+        return True, json.dumps(rows, ensure_ascii=False)
+    if name == "tv_settings":
+        page = args.get("page")
+        return firetv("settings", check(page, SETTINGS)) if page else firetv("settings")
     if name == "tv_type":
         text = str(args.get("text", ""))[:100]
         if not text:

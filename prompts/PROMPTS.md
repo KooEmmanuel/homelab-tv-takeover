@@ -90,3 +90,21 @@ I run Jellyfin on my homelab. Install the official Jellyfin Android TV app on th
 GitHub releases (check the checksum first), and make sure the TV can reach my Jellyfin server on my
 home network. Tell me what you plan to change before you change it.
 ```
+
+## 8. Optional: play a video by name
+
+```
+Searching only shows results. I want to say "play rain sounds on YouTube" or "play something funny
+from my Jellyfin" and have it start on the TV. Use yt-dlp to look up YouTube videos and play them in
+SmartTube on the TV, and use my Jellyfin server's API (I'll create the API key myself) to find a movie
+by title or genre and start it on the TV's Jellyfin app. Add find and play tools to the MCP server.
+Show me what you'll install first.
+```
+
+## 9. Optional: settings pages that open properly
+
+```
+With the new home screen, Fire TV's Settings grid opens scrolled up and the remote can't move in it.
+Find which settings pages can be opened directly over ADB on my TV, and for the ones that can't,
+find another way to open them. Add a settings command and a tool for it.
+```

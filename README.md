@@ -113,9 +113,24 @@ firetv home                        # any remote button: back, up, down, ok...
 firetv volup 3
 firetv search youtube "football highlights"
 firetv shot                        # screenshot of the TV
+firetv settings network            # open a settings page (see below)
 ```
 
 It reconnects on its own when it needs to. The full list of commands is at the top of the script.
+
+**Playing a video straight away.** `firetv search` only shows results. To start a video without touching the remote, copy [`scripts/firetv-media`](scripts/firetv-media) next to `firetv`:
+
+```bash
+cp scripts/firetv-media ~/.local/bin/ && chmod +x ~/.local/bin/firetv-media
+
+firetv find youtube "rain sounds"      # top results, without touching the TV
+firetv play youtube "rain sounds"      # plays the top result
+firetv play jellyfin "big buck bunny"  # a movie from your own Jellyfin server (Path 3)
+```
+
+YouTube needs two extra things: [yt-dlp](https://github.com/yt-dlp/yt-dlp#installation) on the computer (it only looks the video up), and [SmartTube](https://github.com/yuliskov/SmartTube) on the TV, which plays it without ads. Jellyfin needs `JELLYFIN_URL` and `JELLYFIN_KEY` in `~/.config/firetv.env` (in Jellyfin: Dashboard → API Keys), and the Jellyfin app signed in on the TV.
+
+**Settings with a new home screen.** With dumbtv, Amazon's Settings grid opens scrolled up, with the top row off screen and nothing selected, so the remote can't move around in it. `firetv settings <page>` opens the page you want instead: `network`, `device` (About and Developer options), `apps`, `controllers`, `display`, `preferences`, `accessibility`, `equipment`, `livetv`, `notifications`, `alexa`, `sleeptimer` or `help`. Some of these pages are locked to ADB, so for those the script opens the grid and taps the tile for you. I've only tested this on Fire OS 6.
 
 That's Path 1 done. The rest is optional.
 
@@ -125,7 +140,7 @@ That's Path 1 done. The rest is optional.
 
 You don't need to build your own assistant for this. Claude Code (or Claude Desktop) can be the assistant.
 
-[`scripts/firetv-mcp`](scripts/firetv-mcp) is a small MCP server: standard-library Python, nothing to install. It gives the AI tools like `tv_status`, `tv_open_app`, `tv_press`, `tv_volume` and `tv_search`. It calls the `firetv` command from Path 1, so keep both files in the same folder.
+[`scripts/firetv-mcp`](scripts/firetv-mcp) is a small MCP server: standard-library Python, nothing to install. It gives the AI tools like `tv_status`, `tv_open_app`, `tv_press`, `tv_volume`, `tv_search`, `tv_find`, `tv_play` and `tv_settings`. It calls the `firetv` command from Path 1 (and `firetv-media` for finding and playing), so keep the files in the same folder.
 
 ```bash
 cp scripts/firetv-mcp ~/.local/bin/ && chmod +x ~/.local/bin/firetv-mcp
@@ -138,7 +153,7 @@ I connected the same server to Buddy, my own desktop assistant, so I can do it b
 
 ![Buddy searching YouTube on the TV](images/buddy-demo.jpg)
 
-What works today: opening apps, going home, the volume, and searching Netflix and YouTube. What doesn't yet: picking a specific video from the results. You still do that last step with the remote.
+What works today: opening apps, going home, the volume, opening settings pages, and playing a video by name, either from YouTube (in SmartTube) or from your own Jellyfin. You can ask for a genre or a mood too: "play something funny from Jellyfin". Netflix can only show search results so far, so you pick from those with the remote.
 
 ---
 
@@ -191,6 +206,7 @@ This is my setup. A Raspberry Pi 5 is always on, so the TV is always reachable, 
 | [`prompts/PROMPTS.md`](prompts/PROMPTS.md) | The prompts, ready to paste | All paths |
 | [`scripts/tv-scan.py`](scripts/tv-scan.py) | Read-only scanner that finds smart TVs on your network | Path 1 |
 | [`scripts/firetv`](scripts/firetv) | Command-line remote for the TV over ADB | Path 1 |
+| [`scripts/firetv-media`](scripts/firetv-media) | Finds YouTube videos and Jellyfin movies so `firetv play` can start them | Path 1 |
 | [`scripts/firetv.env.example`](scripts/firetv.env.example) | Where the TV's address goes (`~/.config/firetv.env`) | Path 1 |
 | [`scripts/firetv-mcp`](scripts/firetv-mcp) | MCP server so an AI can control the TV | Path 2 |
 | [`systemd/`](systemd/) | Timer that reconnects to the TV every minute | Path 3 |

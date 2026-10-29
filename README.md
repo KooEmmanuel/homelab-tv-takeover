@@ -6,7 +6,7 @@ With Claude Code doing most of the heavy lifting, that's what happened. This rep
 
 ![Before and after: Amazon's home screen next to the new clean home screen](images/before-after.jpg)
 
-[![Watch the video: I Let My Homelab Take Over My TV](https://img.youtube.com/vi/AkDbqhQuKdk/maxresdefault.jpg)](https://youtu.be/AkDbqhQuKdk)
+[![Watch the video: I Let My Homelab Take Over My TV](https://img.youtube.com/vi/AkDbqhQuKdk/hqdefault.jpg)](https://youtu.be/AkDbqhQuKdk)
 
 > 🎬 **Watch the video:** [I Let My Homelab Take Over My TV](https://youtu.be/AkDbqhQuKdk)
 

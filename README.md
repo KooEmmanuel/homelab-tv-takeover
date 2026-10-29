@@ -28,8 +28,10 @@ Most people should start with Path 1, and only go further if they want to.
 
 - **Fire TV, Google TV and Android TV:** yes. They all run Android underneath and have ADB (Android Debug Bridge), which is what everything here uses.
 - **LG (webOS):** not with these scripts, but it can be done. [webos-vibehack](https://github.com/OmkarK97/webos-vibehack) installs a custom home screen through LG's official Developer Mode app (free LG developer account, no root). webOS always sends the Home button to LG's own screen, so a small watcher running on another device switches back to the custom one.
-- **Samsung (Tizen):** you can install your own apps in Developer Mode, but I haven't found a reliable way to make the Home button open a custom home screen.
-- **Roku:** you can control it over the network (Roku's ECP), but the home screen can't be replaced.
+- **Samsung (Tizen):** yes, with Samsung's Developer Mode (no root needed for the basic version). The custom home screen is a regular Tizen app that reopens itself when you leave an app or turn the TV on, for example [dylanfernandezdelara/samsung-tv-launcher](https://github.com/dylanfernandezdelara/samsung-tv-launcher). A few projects go further and remap the real Home button on specific models: [mschr703/samsung-s95b-tizen-home-launcher](https://github.com/mschr703/samsung-s95b-tizen-home-launcher) (S95B) and [shiftynick/samsung-tv-launcher](https://github.com/shiftynick/samsung-tv-launcher) (S90D, uses temporary root). Check that your exact model was tested.
+- **Roku:** partly. A custom launcher can be sideloaded as a developer channel that opens when the TV turns on, like [TraspJorge/Roku-launcher](https://github.com/TraspJorge/Roku-launcher), but the Home button still goes to Roku's own screen. Roku can also be fully controlled over the network with its ECP API.
+
+These are young, small projects (most were created in the last few weeks), so read their READMEs and give Claude the link to check your model before installing anything.
 
 I used a 39" Insignia Fire TV on Fire OS 6.7. The new home screen comes from **[humblemuzzu/dumbtv](https://github.com/humblemuzzu/dumbtv)**, an open-source project that replaces the Fire TV home screen over ADB, without root. All the credit for the launcher itself goes to them.
 

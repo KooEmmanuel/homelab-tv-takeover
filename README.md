@@ -1,60 +1,45 @@
-# My homelab took over my TV
+# Claude Code hacked my smart TV
 
-I wanted my Raspberry Pi homelab and my AI assistant to be able to control my TV. Not through some cloud app, but straight over my home network. I also wanted to get rid of the Fire TV home screen, which is mostly ads for shows I never asked for.
+I wanted my Raspberry Pi homelab and my AI assistant to be able to control my TV, straight over my home network. I also wanted to get rid of the Fire TV home screen, which is mostly ads for shows I never asked for.
 
-With Claude Code doing most of the heavy lifting, that's what happened. This repo has everything I used: the prompts, the scripts, and the full write-up, so you can do the same thing on your own TV.
-
-![Before and after: Amazon's home screen next to the new clean home screen](images/before-after.jpg)
+With Claude Code doing most of the heavy lifting, that's what happened. This repo has everything I used: the prompts, the scripts, and the full write-up.
 
 [![Watch the video: Claude Code Hacked My Smart TV](images/video-thumbnail.jpg)](https://youtu.be/AkDbqhQuKdk)
 
 > 🎬 **Watch the video:** [Claude Code Hacked My Smart TV](https://youtu.be/AkDbqhQuKdk)
 
+![Before and after: Amazon's home screen next to the new clean home screen](images/before-after.jpg)
+
 ---
 
-## What you end up with
+## Pick your path
 
-- A clean home screen on your Fire TV: a clock, your apps and your HDMI inputs, and nothing else.
-- A `firetv` command that can press any remote button, open apps, change the volume, search Netflix and YouTube, and take screenshots.
-- A small MCP server, so an AI assistant (Claude, or anything else that speaks MCP) can control the TV when you ask it to.
-- Optional: your own homelab apps on the TV, like Jellyfin.
+You don't need a homelab or your own AI assistant for this. I built it in layers, and each one works on its own:
 
-The new home screen comes from **[humblemuzzu/dumbtv](https://github.com/humblemuzzu/dumbtv)**, an open-source project that replaces the Fire TV home screen over ADB, without root. All the credit for the launcher itself goes to them. Everything here is the glue around it: finding the TV, connecting a homelab to it, and giving an assistant control.
+| Path | What you need | What you get |
+|---|---|---|
+| **[1. Just a laptop](#path-1-just-a-laptop)** | A laptop on the same Wi-Fi as the TV, and Claude Code | A clean home screen, and a remote you can run from the terminal |
+| **[2. Add an AI assistant](#path-2-let-an-ai-control-the-tv)** | Path 1, plus Claude Code or Claude Desktop | Ask in plain English: "open Netflix on the TV" |
+| **[3. Add a homelab](#path-3-add-a-homelab)** | Path 1, plus an always-on computer like a Raspberry Pi | The TV stays connected 24/7, your own apps (like Jellyfin) on the TV, and control from anywhere in the house |
+
+Most people should start with Path 1, and only go further if they want to.
+
+### Will it work on my TV?
+
+- **Fire TV, Google TV and Android TV:** yes. They all run Android underneath and have ADB (Android Debug Bridge), which is what everything here uses.
+- **Roku, Samsung (Tizen) and LG (webOS):** you can control these from your network in other ways, but you can't replace their home screens.
+
+I used a 39" Insignia Fire TV on Fire OS 6.7. The new home screen comes from **[humblemuzzu/dumbtv](https://github.com/humblemuzzu/dumbtv)**, an open-source project that replaces the Fire TV home screen over ADB, without root. All the credit for the launcher itself goes to them.
 
 ![The new home screen](images/new-home.png)
 
 ---
 
-## What you need
+## Path 1: Just a laptop
 
-- **A TV that runs Android underneath.** Fire TV, Google TV and Android TV all work, because they have ADB (Android Debug Bridge). I used a 39" Insignia Fire TV on Fire OS 6.7.
-  - Roku, Samsung (Tizen) and LG (webOS) TVs can be controlled in other ways, but you can't replace their home screens.
-- **A computer on the same Wi-Fi as the TV.** I used a Raspberry Pi 5 homelab. A laptop works just as well.
-- **[Claude Code](https://claude.com/claude-code)**, or another coding assistant you trust to run commands for you.
+All you need is a laptop (macOS or Linux; on Windows, use WSL) on the same Wi-Fi as the TV, and [Claude Code](https://claude.com/claude-code). Every prompt below is also in **[prompts/PROMPTS.md](prompts/PROMPTS.md)**, ready to copy.
 
-You don't need a homelab for any of this. If you only have a laptop, run everything from the laptop.
-
----
-
-## How I did it
-
-### 1. Find the TVs on your network
-
-I started with one prompt and let Claude write a small scanner. It only sends read-only requests, so it never presses anything on your TVs.
-
-> Find every smart TV on my home network from this computer. Use only read-only discovery (SSDP, mDNS and common TV ports) and don't press anything on the TVs. Give me a table with each TV's name, brand, model, IP address and how it can be controlled.
-
-It found three TVs: two Rokus and my Fire TV. Claude actually recommended a Roku because it's the easiest to control, but a Roku won't let you replace its home screen, so I went with the Fire TV.
-
-![The scan results, with addresses blurred](images/scan-results.jpg)
-
-The scanner is in [`scripts/tv-scan.py`](scripts/tv-scan.py) if you want to run it yourself:
-
-```bash
-python3 scripts/tv-scan.py 192.168.1     # your network's first three numbers
-```
-
-### 2. Turn on developer options on the TV
+### Step 1: Turn on developer options on the TV
 
 This is the only part you have to do with the remote.
 
@@ -62,43 +47,62 @@ This is the only part you have to do with the remote.
 2. Highlight your TV's name and press the **select** button **seven times**. It tells you you're now a developer.
 3. Go back. There's a new menu called **Developer Options**. Turn on **ADB debugging**.
 
-While you're on the About page, note your **Fire OS version** and your TV's **IP address** (under Network). You'll need both.
+While you're on the About page, note your **Fire OS version** and your TV's **IP address** (under Network).
 
 | About page | Developer Options |
 |---|---|
 | ![About page](images/about-page.jpg) | ![ADB debugging](images/developer-options.jpg) |
 
-ADB debugging lets any device on your home network try to connect to the TV. Only turn it on at home, and you can switch it off again any time.
+ADB debugging lets devices on your home network ask to connect to the TV. The TV still asks you before allowing a new one, but only turn it on at home. You can switch it off again any time.
 
-### 3. Let Claude research your exact TV
+### Step 2: Find your TV
 
-Before changing anything, I asked Claude to research what actually works on my TV and Fire OS version, and to show me the sources.
+If you already know your TV's IP address, you can skip this. Otherwise, give Claude this:
 
-> My TV is an Insignia Fire TV on Fire OS 6.7 with ADB debugging turned on. I want to replace its home screen with a clean one, without rooting it. Find well-maintained open-source projects that do this, tell me which ones were tested on my model and Fire OS version, and whether every change can be undone. Include sources. Don't run anything yet.
+> Find the smart TVs on my home network from this computer. Use only read-only discovery (SSDP, mDNS and common TV ports) and don't press anything on the TVs. Give me a table with each TV's name, brand, model, IP address and how it can be controlled.
 
-It found **dumbtv**, which had already been tested on an Insignia Fire TV running Fire OS 6.7, the same as mine. It doesn't need root, and it comes with an undo script.
+Or run the scanner from this repo yourself. It works out your network automatically and never presses anything:
 
-### 4. Connect, and allow it on the TV
+```bash
+python3 scripts/tv-scan.py
+```
 
-Claude installed ADB and connected to the TV. The first time a computer connects, the TV asks if you trust it. **Tick "Always allow from this computer"** and press OK. If you skip the tick box, the TV forgets and asks again every time.
+![The scan results, with addresses blurred](images/scan-results.jpg)
+
+When I ran it, it found three TVs: two Rokus and my Fire TV. Claude recommended a Roku because it's the easiest to control, but a Roku won't let you replace its home screen, so I went with the Fire TV.
+
+### Step 3: Let Claude research your exact TV
+
+Before changing anything, ask Claude to research what actually works on your TV and show you its sources:
+
+> My TV is a `<brand and model>` running `<Fire OS / Android TV version>`, and ADB debugging is on. I want to replace its home screen with a clean one, without rooting it. Find well-maintained open-source projects that do this, tell me which ones were tested on my model and version, and whether every change can be undone. Include sources. Don't run anything yet.
+
+For my TV it found **dumbtv**, which had already been tested on an Insignia Fire TV running Fire OS 6.7, the same as mine.
+
+### Step 4: Connect, and allow it on the TV
+
+> Install adb on this computer if it isn't there, connect to my TV at `<TV IP>:5555`, and run a read-only check that tells me the model and software build. Don't change anything on the TV yet.
+
+The first time a computer connects, the TV asks if you trust it. **Tick "Always allow from this computer"** and press OK. If you skip the tick box, the TV forgets and asks again every time.
 
 ![The TV asking to allow USB debugging](images/allow-debugging.jpg)
 
-Before touching anything, Claude ran dumbtv's read-only preflight check. It confirmed the model and software build matched what dumbtv was tested on.
+### Step 5: Install only the new home screen
 
-### 5. Install only the new home screen
-
-dumbtv can also do a much bigger cleanup (disabling Amazon apps, blocking tracking). I didn't want all of that, so I asked for the launcher only, and I asked to see every command first.
+dumbtv can also do a much bigger cleanup (disabling Amazon apps, blocking tracking). I only wanted the new home screen, and I wanted to see every command first:
 
 > Install only the new home screen from dumbtv, not the full cleanup. Read the install script first, show me every command it will run and the command that undoes it, and wait for my OK.
 
 Claude downloaded the app, checked the file against its published checksum, and installed it. The launcher gets one permission, so it can notice when Amazon's home screen opens and put its own screen in front instead. Now when I press Home, I get the clean screen.
 
-### 6. Control the TV from the command line
+### Step 6: A remote in your terminal
 
-Claude then wrote [`scripts/firetv`](scripts/firetv), a small wrapper around ADB. It reconnects on its own when needed, so every command just works.
+[`scripts/firetv`](scripts/firetv) is a small wrapper around ADB that runs on macOS and Linux. Copy it somewhere on your PATH, put your TV's address in `~/.config/firetv.env`, and you're done:
 
 ```bash
+cp scripts/firetv ~/.local/bin/ && chmod +x ~/.local/bin/firetv
+echo 'FIRETV_ADDR=192.168.1.50:5555' > ~/.config/firetv.env      # your TV's IP
+
 firetv status                      # is it awake, what's on screen, the volume
 firetv open netflix                # or youtube, prime, jellyfin, home...
 firetv home                        # any remote button: back, up, down, ok...
@@ -107,41 +111,54 @@ firetv search youtube "football highlights"
 firetv shot                        # screenshot of the TV
 ```
 
-The full list of commands is at the top of the script and in the [full guide](docs/FULL-GUIDE.md#7-the-firetv-command).
+It reconnects on its own when it needs to. The full list of commands is at the top of the script.
 
-### 7. Let your AI assistant drive
-
-[`scripts/firetv-mcp`](scripts/firetv-mcp) is a small MCP server (standard-library Python, nothing to install) with tools like `tv_open_app`, `tv_press`, `tv_volume` and `tv_search`. I connected it to Buddy, my own desktop assistant. Now I can just say "open Netflix on the TV".
-
-![Buddy searching YouTube on the TV](images/buddy-demo.jpg)
-
-To use it with Claude Code instead:
-
-```bash
-claude mcp add firetv -- ssh pi@homelab.local '~/.local/bin/firetv-mcp'
-# or, if the TV is on the same machine's network and the scripts are local:
-claude mcp add firetv -- /path/to/scripts/firetv-mcp
-```
-
-What works today: opening apps, going home, the volume, and searching Netflix and YouTube. What doesn't yet: picking a specific video from the results. You still do that last step with the remote.
-
-### 8. Bonus: my homelab apps on the TV
-
-I also had Claude put **Jellyfin** on the TV, so my own movies, served from the Raspberry Pi, are right there on the new home screen. Signing in is easy: Jellyfin shows a short code on the TV, and you type it in on your laptop.
-
-![Jellyfin on the TV, playing from the homelab](images/jellyfin.jpg)
+That's Path 1 done. The rest is optional.
 
 ---
 
-## All the prompts
+## Path 2: Let an AI control the TV
 
-Every prompt I used, plus a few general ones for other TVs, is in **[prompts/PROMPTS.md](prompts/PROMPTS.md)**. They're written so you can paste them straight into Claude Code.
+You don't need to build your own assistant for this. Claude Code (or Claude Desktop) can be the assistant.
 
-## The full write-up
+[`scripts/firetv-mcp`](scripts/firetv-mcp) is a small MCP server: standard-library Python, nothing to install. It gives the AI tools like `tv_status`, `tv_open_app`, `tv_press`, `tv_volume` and `tv_search`. It calls the `firetv` command from Path 1, so keep both files in the same folder.
 
-**[docs/FULL-GUIDE.md](docs/FULL-GUIDE.md)** has everything:
-- installing ADB without sudo
-- the keepalive timer
+```bash
+cp scripts/firetv-mcp ~/.local/bin/ && chmod +x ~/.local/bin/firetv-mcp
+claude mcp add firetv -- ~/.local/bin/firetv-mcp
+```
+
+Then just ask Claude: *"open YouTube on the TV and search for football highlights"*.
+
+I connected the same server to Buddy, my own desktop assistant, so I can do it by voice:
+
+![Buddy searching YouTube on the TV](images/buddy-demo.jpg)
+
+What works today: opening apps, going home, the volume, and searching Netflix and YouTube. What doesn't yet: picking a specific video from the results. You still do that last step with the remote.
+
+---
+
+## Path 3: Add a homelab
+
+This is my setup. A Raspberry Pi 5 is always on, so the TV is always reachable, even when my laptop is closed.
+
+- **The same scripts, on the Pi.** Put `firetv` and `firetv-mcp` in `~/.local/bin` on the Pi, and the TV address in `~/.config/firetv.env`.
+- **A keepalive timer.** ADB over Wi-Fi drops when the TV sleeps. [`systemd/`](systemd/) has a timer that reconnects every minute:
+  ```bash
+  cp systemd/firetv-keepalive.* ~/.config/systemd/user/
+  systemctl --user daemon-reload && systemctl --user enable --now firetv-keepalive.timer
+  loginctl enable-linger $USER      # keep it running when you're logged out
+  ```
+- **Control from any computer.** Your assistant runs the MCP server on the Pi over SSH:
+  ```bash
+  claude mcp add firetv -- ssh pi@homelab.local '~/.local/bin/firetv-mcp'
+  ```
+- **Your own apps on the TV.** I had Claude put **Jellyfin** on the TV, so my own movies, served from the Pi, are right there on the new home screen. To sign in, Jellyfin shows a short code on the TV and you type it in on your laptop.
+
+![Jellyfin on the TV, playing from the homelab](images/jellyfin.jpg)
+
+**[docs/FULL-GUIDE.md](docs/FULL-GUIDE.md)** has every detail of this setup:
+- installing ADB on the Pi without sudo
 - how the MCP server works
 - making Jellyfin reachable from the TV
 - every problem I hit and how it was fixed
@@ -150,29 +167,30 @@ Every prompt I used, plus a few general ones for other TVs, is in **[prompts/PRO
 
 ## Undo everything
 
-- **Get Amazon's home screen back:** `./launcher/install.sh --undo` in the dumbtv folder, then `adb uninstall tv.dumbtv.home` if you want the app gone too.
-- **Stop the keepalive timer:** `systemctl --user disable --now firetv-keepalive.timer`
+- **Get Amazon's home screen back:** run `./launcher/install.sh --undo` in the dumbtv folder, then `adb uninstall tv.dumbtv.home` if you want the app gone too.
+- **Stop the keepalive timer (Path 3):** `systemctl --user disable --now firetv-keepalive.timer`
+- **Remove it from Claude (Path 2):** `claude mcp remove firetv`
 - **Close the door on the TV:** turn ADB debugging off in Developer Options.
 
 ## A few honest notes
 
-- **ADB stays open while debugging is on.** Anyone on your Wi-Fi can try to connect, but the TV still asks before allowing a new computer. Keep it on a network you trust.
-- **ADB can drop.** It drops when the TV is asleep or showing an HDMI input. The keepalive timer reconnects, and if ADB ever gets stuck, switching ADB debugging off and on fixes it.
+- **ADB stays open while debugging is on.** Anyone on your Wi-Fi can ask to connect, but the TV still asks before allowing a new computer. Keep it on a network you trust.
+- **ADB can drop.** It drops when the TV is asleep or showing an HDMI input. If ADB ever gets stuck, switching ADB debugging off and on fixes it.
 - **Fire OS updates can change things.** If an update breaks the home screen, run dumbtv's undo and check their repo for news.
 
 ---
 
 ## What's in this repo
 
-| Path | What it is |
-|---|---|
-| [`scripts/tv-scan.py`](scripts/tv-scan.py) | Read-only scanner that finds smart TVs on your network |
-| [`scripts/firetv`](scripts/firetv) | Command-line remote for the Fire TV over ADB |
-| [`scripts/firetv-mcp`](scripts/firetv-mcp) | MCP server so an AI assistant can control the TV |
-| [`scripts/firetv.env.example`](scripts/firetv.env.example) | Where the TV's address goes (`~/.config/firetv.env`) |
-| [`systemd/`](systemd/) | Timer that reconnects to the TV every minute |
-| [`prompts/PROMPTS.md`](prompts/PROMPTS.md) | The prompts |
-| [`docs/FULL-GUIDE.md`](docs/FULL-GUIDE.md) | The complete step-by-step record |
+| Path | What it is | Used in |
+|---|---|---|
+| [`prompts/PROMPTS.md`](prompts/PROMPTS.md) | The prompts, ready to paste | All paths |
+| [`scripts/tv-scan.py`](scripts/tv-scan.py) | Read-only scanner that finds smart TVs on your network | Path 1 |
+| [`scripts/firetv`](scripts/firetv) | Command-line remote for the TV over ADB | Path 1 |
+| [`scripts/firetv.env.example`](scripts/firetv.env.example) | Where the TV's address goes (`~/.config/firetv.env`) | Path 1 |
+| [`scripts/firetv-mcp`](scripts/firetv-mcp) | MCP server so an AI can control the TV | Path 2 |
+| [`systemd/`](systemd/) | Timer that reconnects to the TV every minute | Path 3 |
+| [`docs/FULL-GUIDE.md`](docs/FULL-GUIDE.md) | The complete record of my homelab setup | Path 3 |
 
 ## Credits
 
